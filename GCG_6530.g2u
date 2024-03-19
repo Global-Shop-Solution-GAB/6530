@@ -1,0 +1,205 @@
+﻿Program.Sub.Preflight.Start
+V.Global.sError.Declare(String)
+
+Program.External.Include.Library("AP043UP1.lib")
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+'Author: Arturo Almaguer
+'Date: 01 November 2021
+'Customer: Nyle Systems, quote number 13018
+'This program process a CSV file and then creates a big AP Batch from the records
+'This script is triggered from a new custom menu item under AP - Transactions - Credit Card Upload [6530]
+
+Function.Intrinsic.UI.UsePixels ' Allows you to use Pixels instead of Twips throughout
+
+F.Intrinsic.Control.Try
+
+	F.Intrinsic.Control.CallSub("Browser")
+	F.Intrinsic.Control.CallSub("UploadBatch")
+
+F.Intrinsic.Control.Catch
+
+	F.Intrinsic.Control.CallSub(CatchError)
+	
+F.Intrinsic.Control.EndTry
+
+Program.Sub.Main.End
+Program.Sub.Browser.Start
+'This subroutine allows the user to browse and select the file they want to process
+
+F.Intrinsic.Control.Try
+
+	V.Local.sFilePath.Declare(String)
+	
+	F.Intrinsic.UI.ShowOpenFileDialog("", "csv|*.csv", V.Local.sFilePath)
+	F.Intrinsic.Control.If(V.Local.sFilePath.IsNotCancel)
+		
+		'Processing file
+		F.Intrinsic.Control.CallSub("ReadFile", "FilePath", V.Local.sFilePath)
+		
+	F.Intrinsic.Control.Else
+		
+		'Displaying error message
+		F.Intrinsic.UI.Msgbox("A file must be selected to continue with the process.", "Required Field")
+		F.Intrinsic.Control.End
+		
+	F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.Catch
+
+	F.Intrinsic.Control.CallSub(CatchError)
+	
+F.Intrinsic.Control.EndTry
+
+Program.Sub.Browser.End
+Program.Sub.ReadFile.Start
+'This subroutine is processing the file
+
+F.Intrinsic.Control.Try
+
+	V.Local.iCounter.Declare(Long)
+	V.Local.sRet.Declare(String)
+	V.Local.smm.Declare(String)
+	V.Local.sdd.Declare(String)
+	V.Local.syy.Declare(String)
+	V.Local.sJob.Declare(String)
+	V.Local.sSuffix.Declare(String)
+	V.Local.sWO.Declare(String)
+	V.Local.sSeq.Declare(String)
+	
+	'Processing csv file
+	F.Data.DataTable.CreateFromCSV("dtProcess", V.Args.FilePath, "VENDOR_NO*!*INVOICE_NO*!*INVOICE_DATE*!*WO*!*SEQ*!*QTY2*!*AMOUNT2*!*GL_DESCR", "String*!*String*!*String*!*String*!*String*!*String*!*String*!*String", True)
+	
+	'Deleting header line
+	F.Data.DataTable.DeleteRow("dtProcess", 0)
+	f.Data.DataTable.AcceptChanges("dtProcess")
+	
+	'Adding new columns
+	F.Data.DataTable.AddColumn("dtProcess", "JOB", "String")
+	F.Data.DataTable.AddColumn("dtProcess", "SUFFIX", "String")
+	
+	'Formatting new AMOUNT column
+	f.Data.DataTable.AddColumn("dtProcess","AMOUNT","String",0)
+	F.Data.DataTable.SetValueFormat("dtProcess", -1, "AMOUNT2", "AMOUNT", "##.00")
+	F.Data.DataTable.RemoveColumn("dtProcess", "AMOUNT2")
+	
+	'Changing column data type from string to long
+	f.Data.DataTable.AddColumn("dtProcess","QTY","Long",0)
+	F.Data.DataTable.SetValue("dtProcess", -1, "QTY", 1)
+	F.Data.DataTable.RemoveColumn("dtProcess", "QTY2")
+	
+	'Looping through dt
+	F.Intrinsic.Control.For(V.Local.iCounter, 0, V.DataTable.dtProcess.RowCount--, 1)
+		
+		'Setting INVOCE_DATE in proper format
+		F.Intrinsic.String.Split(V.Datatable.dtProcess(V.Local.iCounter).INVOICE_DATE!FieldValTrim, "/", V.Local.sRet)
+		F.Intrinsic.String.LPad(V.Local.sRet(0), "0", 2, V.Local.smm)
+		F.Intrinsic.String.LPad(V.Local.sRet(1), "0", 2, V.Local.sdd)
+		F.Intrinsic.String.Right(V.Local.sRet(2), 2, V.Local.syy)
+		F.Intrinsic.String.Build("{0}{1}{2}", V.Local.smm, V.Local.sdd, V.Local.syy, V.Local.sRet)
+		F.Data.DataTable.SetValue("dtProcess", V.Local.iCounter, "INVOICE_DATE", V.Local.sRet)
+		
+		'Separating WO column into JOB and SUFFIX columns
+		V.Local.sWO.Set(V.Datatable.dtProcess(V.Local.iCounter).WO!FieldValTrim)
+		f.Intrinsic.String.Left(V.Local.sWO, "6", V.Local.sJob)
+		f.Intrinsic.String.Right(V.Local.sWO, "3", V.Local.sSuffix)
+		F.Data.DataTable.SetValue("dtProcess", V.Local.iCounter, "JOB", V.Local.sJob)
+		F.Data.DataTable.SetValue("dtProcess", V.Local.iCounter, "SUFFIX", V.Local.sSuffix)
+		
+		'Formatting SEQ to be 6 digit long
+		V.Local.sSeq.Set(V.Datatable.dtProcess(V.Local.iCounter).SEQ!FieldValTrim)
+		F.Intrinsic.String.LPad(V.Local.sSeq, "0", 6, V.Local.sSeq)
+		F.Data.DataTable.SetValue("dtProcess", V.Local.iCounter, "SEQ", V.Local.sSeq)
+		
+	F.Intrinsic.Control.Next(V.Local.iCounter)
+	
+F.Intrinsic.Control.Catch
+
+	F.Intrinsic.Control.CallSub(CatchError)
+	
+F.Intrinsic.Control.EndTry
+
+Program.Sub.ReadFile.End
+Program.Sub.UploadBatch.Start
+'This subroutine uploads the new AP Batch with all the processed records 
+
+F.Intrinsic.Control.Try
+
+	V.Local.iCounter.Declare(Long)
+	V.Local.sSQL.Declare(String)
+	V.Local.sBatch.Declare(String)
+	V.Local.sLine.Declare(String)
+	V.Local.sDescription.Declare(String)
+	
+	F.ODBC.Connection!Con.OpenCompanyConnection
+	F.Intrinsic.Control.For(V.Local.iCounter, 0, V.DataTable.dtProcess.RowCount--, 1) 
+		
+		'Check if Job exists, if Vendor exists, if invoice exists. Callwrapper's library takes care of all these. A text file will be displayed if the program got an error during the process.
+		
+		'GL account should be the customer's WIP account, 1220-000
+		f.Data.DataTable.AddRow("AP043UP1", "PostDate", V.Ambient.Date.FormatMMDDYY, "Vendor", V.Datatable.dtProcess(V.Local.iCounter).VENDOR_NO!FieldValTrim, "Invoice", V.Datatable.dtProcess(V.Local.iCounter).INVOICE_NO!FieldValTrim, "InvoiceDate", V.Datatable.dtProcess(V.Local.iCounter).INVOICE_DATE!FieldValTrim, "Amount", V.Datatable.dtProcess(V.Local.iCounter).AMOUNT!FieldVal, "GLAccount", "1220-000", "TaxableFlag", "", "TaxCode", "", "InvoiceNotes", "", "BookSelfAccessTax", "", "WorkOrder", V.Datatable.dtProcess(V.Local.iCounter).JOB!FieldValTrim, "WorkSuff", V.Datatable.dtProcess(V.Local.iCounter).SUFFIX!FieldValTrim, "WorkSeq", V.Datatable.dtProcess(V.Local.iCounter).SEQ!FieldValTrim, "Branch", "", "PurchaseOrder", "", "Buyer", "", "Voucher", "")	
+			
+	F.Intrinsic.Control.Next(V.Local.iCounter)
+	F.ODBC.Connection!Con.Close
+	
+	'Calling callwrapper
+	F.Intrinsic.Control.CallSub("AP043UP1Sync")
+	
+	'Getting batch number
+	F.ODBC.Connection!Con.OpenCompanyConnection
+	F.Intrinsic.String.Build("select top 1 RTRIM(BATCH) BATCH from AP_OPEN_BATCHES where USERID = '{0}' and POST_DATE = '{1}' order by POST_DATE, LAST_CHG_TIME desc;", V.Caller.User, V.Ambient.Date.FormatYYYYMMDD, V.Local.sSQL)
+	F.ODBC.Connection!Con.ExecuteAndReturn(V.Local.sSQL, V.Local.sBatch)
+
+	'Adding column to be the key column to match for the next dictionary
+	F.Data.DataTable.AddExpressionColumn("dtProcess", "ID", "String", "INVOICE_NO+JOB+SUFFIX+SEQ+AMOUNT")
+	
+	'Getting line numbers
+	F.Intrinsic.String.Build("select RTRIM(INVC) + RTRIM(JOB_NUM) + RTRIM(SUB_JOB) + RTRIM(OPERATION) + RTRIM(INVC_AMT) ID, LN from AP_OPEN_BATCHES where BATCH = '{0}' and JOB_UPDATE = '1' order by LN;", V.Local.sBatch, V.Local.sSQL)
+	F.Data.Dictionary.CreateFromSQL("dictLines", "Con", V.Local.sSQL)
+	F.Data.Dictionary.SetDefaultReturn("dictLines", "")
+	F.Data.DataTable.AddColumn("dtProcess", "BATCH_LINE", "String")
+	F.Data.DataTable.FillFromDictionary("dtProcess", "dictLines", "ID", "BATCH_LINE")
+	F.Data.Dictionary.Close("dictLines")
+	
+	'Looping through dt again to update quantity and GL override description fields for each record
+	V.Local.iCounter.Set(0)
+	F.Intrinsic.Control.For(V.Local.iCounter, 0, V.DataTable.dtProcess.RowCount--, 1) 
+		
+		V.Local.sDescription.Set(V.DataTable.dtProcess(V.Local.iCounter).GL_DESCR!FieldValTrim)
+		V.Local.sLine.Set(V.DataTable.dtProcess(V.Local.iCounter).BATCH_LINE!FieldValTrim)
+
+		'Updating GL Override Descrition and Quantity fields directly in table
+		F.Intrinsic.String.Build("update AP_OPEN_BATCHES set CHK_O_DESC = '{0}', QUANTITY = '1' where USERID = '{1}' and BATCH = '{2}' and LN = '{3}';", V.Local.sDescription.PSQLFriendly, V.Caller.User, V.Local.sBatch, V.Local.sLine, V.Local.sSQL)
+		F.ODBC.Connection!Con.Execute(V.Local.sSQL)
+	
+	F.Intrinsic.Control.Next(V.Local.iCounter)
+	F.ODBC.Connection!Con.Close
+
+F.Intrinsic.Control.Catch
+
+	F.Intrinsic.Control.CallSub(CatchError)
+	
+F.Intrinsic.Control.EndTry
+
+Program.Sub.UploadBatch.End
+Program.Sub.CatchError.Start
+'Displaying error message
+F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}", V.Ambient.ScriptPath, V.Ambient.Newline, V.Ambient.SubroutineCalledFrom, V.Ambient.ErrorNumber, V.Ambient.ErrorDescription, V.Ambient.GABVersion, V.Global.sError) 
+F.Intrinsic.UI.Msgbox(V.Global.sError)
+F.Intrinsic.Control.CallSub("Unload")
+Program.Sub.CatchError.End
+Program.Sub.Unload.Start
+'Closes the connection if it is open
+f.Intrinsic.Control.If(v.ODBC.Con.exists,=,1)
+    f.ODBC.Connection!Con.Close
+f.Intrinsic.Control.EndIf
+
+'Ending program
+F.Intrinsic.Control.End
+Program.Sub.Unload.End
+
+Program.Sub.Comments.Start
+${$5$}$3.0.0.0$}$1
+${$6$}$apadilla$}$20220419094409581$}$Lag9STqBJOmNXSbd5+msRcBWPGz0aFqSzPePUG9qWbwbKcHcjsn2W0QhbGVni24CAUS1J1LwT9hHXU5qqVBSvg==
+Program.Sub.Comments.End
